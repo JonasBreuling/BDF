@@ -20,7 +20,7 @@ setup(
         "numpy>=1.21.3",
         "scipy>=1.10.1",
         "black>=22.1.0",
-        "pytest",
+        "matplotlib",
     ],
     packages=find_packages(),
     python_requires=">=3.10",

@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.optimize._numdiff import approx_derivative
-from bdf import solve_dae
+from BDF import solve_dae
 
 if __name__ == "__main__":
     mass = 1

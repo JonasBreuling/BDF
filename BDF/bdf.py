@@ -17,8 +17,6 @@ from scipy.integrate._ivp.common import (
 from scipy.integrate._ivp.base import DenseOutput, ConstantDenseOutput
 from scipy.integrate._ivp.ivp import prepare_events, MESSAGES, OdeResult
 
-# from cardillo.math import fsolve
-
 
 # source code taken from https://github.com/scipy/scipy/blob/main/scipy/integrate/_ivp/bdf.py
 MAX_ORDER = 5
@@ -28,7 +26,7 @@ NEWTON_MAXITER = 4
 # NEWTON_MAXITER = 1
 # MIN_FACTOR = 1.0
 # MAX_FACTOR = 1.0
-# TODO: the lower boundary is crucial
+# # TODO: the lower boundary is crucial
 MIN_FACTOR = 0.999
 MAX_FACTOR = 10
 
@@ -51,20 +49,18 @@ def change_D(D, order, factor):
     D[: order + 1] = np.dot(RU.T, D[: order + 1])
 
 
-def solve_bdf_system(fun, t_new, y_predict, c, psi, LU, solve_lu, scale, tol):
+def solve_bdf_system(fun, t_new, y_predict, y_dot_predict, c, LU, solve_lu, scale, tol):
     """Solve the algebraic system resulting from BDF method."""
     d = 0
     y = y_predict.copy()
     dy_norm_old = None
     converged = False
     for k in range(NEWTON_MAXITER):
-        y_dot = psi + c * d
-        # f = fun(t_new, y)
+        y_dot = y_dot_predict + c * d
         f = fun(t_new, y, y_dot)
         if not np.all(np.isfinite(f)):
             break
 
-        # dy = solve_lu(LU, c * f - psi - d)
         dy = solve_lu(LU, -f)
         dy_norm = norm(dy / scale)
 
@@ -340,6 +336,8 @@ class DAESolver:
 class BDF(DAESolver):
     """Implicit method based on backward-differentiation formulas.
 
+    TODO: Adapt documentation.
+
     This is a variable order method with the order varying automatically from
     1 to 5. The general framework of the BDF algorithm is described in [1]_.
     This class implements a quasi-constant step size as explained in [2]_.
@@ -471,8 +469,10 @@ class BDF(DAESolver):
         y_dot0,
         t_bound,
         max_step=np.inf,
-        rtol=1e-3,
-        atol=1e-6,
+        # rtol=1e-3,
+        # atol=1e-6,
+        rtol=1e-8,
+        atol=1e-2,
         jac=None,
         jac_sparsity=None,
         vectorized=False,
@@ -482,16 +482,13 @@ class BDF(DAESolver):
         warn_extraneous(extraneous)
         super().__init__(fun, t0, y0, y_dot0, t_bound, vectorized, support_complex=True)
 
-        # # solve for initial accelerations
-        # f = lambda y_dot: self.fun(t0, y0, y_dot)
-        # y_dot0, converged, error, n_iter, F = fsolve(f, y_dot0)
-        # assert converged, "Failed to solve for consistent initial conditions."
-        # self.y_dot = y_dot0
+        # TODO: solve for initial accelerations
 
         self.max_step = validate_max_step(max_step)
         self.rtol, self.atol = validate_tol(rtol, atol, self.n)
-        f = self.fun(self.t, self.y, self.y_dot)
-        # TODO: Implement a starting routine here!
+        F = self.fun(self.t, self.y, self.y_dot)
+        assert np.allclose(F, np.zeros_like(F), rtol, atol), "initial conditions are inconsistent"
+        # TODO: implement a starting routine here
         # if first_step is None:
         #     self.h_abs = select_initial_step(
         #         self.fun, self.t, self.y, f, self.direction, 1, self.rtol, self.atol
@@ -505,16 +502,16 @@ class BDF(DAESolver):
 
         self.newton_tol = max(10 * EPS / rtol, min(0.03, rtol**0.5))
 
-        kappa = np.array([0, -0.1850, -1 / 9, -0.0823, -0.0415, 0])[: MAX_ORDER + 1]
         self.gamma = np.hstack(
             (0, np.cumsum(1 / np.arange(1, MAX_ORDER + 1)))
         )  # factor of leading coefficient
-        self.alpha = (1 - kappa) * self.gamma  # 1 x L-vector of Byrne1975 (2.18)
-        self.error_const = kappa * self.gamma + 1 / np.arange(1, MAX_ORDER + 2)
+        # TODO: Check the correct error constants!
+        # kappa = np.array([0, -0.1850, -1 / 9, -0.0823, -0.0415, 0])[: MAX_ORDER + 1]
+        # self.error_const = kappa * self.gamma + 1 / np.arange(1, MAX_ORDER + 2)
+        self.error_const = self.gamma + 1 / np.arange(1, MAX_ORDER + 2)
 
         D = np.empty((MAX_ORDER + 3, self.n), dtype=self.y.dtype)
         D[0] = self.y
-        # D[1] = f * self.h_abs * self.direction
         D[1] = self.y_dot * self.h_abs * self.direction
         self.D = D
 
@@ -553,8 +550,9 @@ class BDF(DAESolver):
         t0 = self.t
         y0 = self.y
         y_dot0 = self.y_dot
-        c = self.h_abs * self.direction / self.alpha[self.order]
+        c = self.h_abs * self.direction / self.gamma[self.order]
 
+        # TODO: Add numerical Jacobian
         if jac is None:
             raise RuntimeError("Jacobian has to be given for the moment")
             if sparsity is not None:
@@ -630,14 +628,10 @@ class BDF(DAESolver):
         else:
             h_abs = self.h_abs
 
-        # min_step = max_step
-        # h_abs = max_step
-
         atol = self.atol
         rtol = self.rtol
         order = self.order
 
-        alpha = self.alpha
         gamma = self.gamma
         error_const = self.error_const
 
@@ -652,6 +646,7 @@ class BDF(DAESolver):
 
             h = h_abs * self.direction
             t_new = t + h
+            print(f"t: {t_new}")
 
             if self.direction * (t_new - self.t_bound) > 0:
                 t_new = self.t_bound
@@ -666,47 +661,19 @@ class BDF(DAESolver):
             y_dot_predict = np.dot(D[1 : order + 1].T, gamma[1 : order + 1]) / h
 
             scale = atol + rtol * np.abs(y_predict)
-            # psi = np.dot(D[1 : order + 1].T, gamma[1 : order + 1]) / alpha[order]
-
-            # def f(d):
-            #     y = y_predict + d
-            #     y_dot = (
-            #         gamma[order] * d + np.dot(D[1 : order + 1].T, gamma[1 : order + 1])
-            #     ) / h
-            #     return self.fun(t_new, y, y_dot)
-
-            # d, converged, error, n_iter, F = fsolve(f, np.zeros_like(y_predict))
-            # y_new = y_predict + d
-
-            # def f(y):
-            #     d = y - y_predict.copy()
-            #     y_dot = (
-            #         gamma[order] * d + np.dot(D[1 : order + 1].T, gamma[1 : order + 1])
-            #     ) / h
-            #     return self.fun(t_new, y, y_dot)
-
-            # y_new, converged, error, n_iter, F = fsolve(f, y_predict.copy())
-            # d = y_new - y_predict
-
-            # # print(f"t: {t_new}; converged: {converged}")
-            print(f"t: {t_new}")
 
             converged = False
-            # c = h / alpha[order]
             c = gamma[order] / h
             while not converged:
                 if LU is None:
-                    # TODO: LU-decomposition
-                    # LU = self.lu(self.I - c * J)
                     LU = self.lu(J)
 
                 converged, n_iter, y_new, d = solve_bdf_system(
                     self.fun,
                     t_new,
                     y_predict,
-                    c,
-                    # psi,
                     y_dot_predict,
+                    c,
                     LU,
                     self.solve_lu,
                     scale,
@@ -716,36 +683,31 @@ class BDF(DAESolver):
                 if not converged:
                     if current_jac:
                         break
-                    # J = self.jac(t_new, y_predict)
+                    # TODO: Is this a good choice?
                     J = self.jac(t_new, y_predict, y_dot_predict, c)
                     # J = self.jac(t_new, y_predict + d, y_dot_predict + c * d, c)
                     LU = None
                     current_jac = True
 
-            # accept all steps
-            step_accepted = True
+            # # accept all steps
+            # step_accepted = True
 
-            if not converged:
-                # print(f"not converged")
-                # factor = 0.5
-                # TODO: This factor is a problem
-                factor = 0.6
-                h_abs *= factor
-                change_D(D, order, factor)
-                self.n_equal_steps = 0
-                LU = None
-                continue
+            # if not converged:
+            #     # TODO: This factor is crucial
+            #     # factor = 0.5
+            #     factor = 0.999
+            #     h_abs *= factor
+            #     change_D(D, order, factor)
+            #     self.n_equal_steps = 0
+            #     LU = None
+            #     continue
 
             safety = 0.9 * (2 * NEWTON_MAXITER + 1) / (2 * NEWTON_MAXITER + n_iter)
 
             scale = atol + rtol * np.abs(y_new)
             error = error_const[order] * d
-            # error = error_const[order] * F # TODO: This seems to fix the problem
-            # d_ = np.zeros_like(d)
-            # d_[:4] = d[:4]
-            # error = error_const[order] * d_
 
-            # supress algebraic variables in the error measure
+            # TODO: supress algebraic variables in the error measure
             error[-1] = 0
             scale[-1] = 1
 
