@@ -1,0 +1,23 @@
+# vs code settings
+.vscode
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# pytest
+.pytest_cache/
+*.pyc
+eggs/
+.eggs/
+*.egg-info/
+.installed.cfg
+*.egg
+.coverage
+
+# ignore log files
+*.log
+
+# virtual environment
+myvenv
+
